@@ -1,0 +1,55 @@
+spring:
+  application:
+    name: spring-static-demo
+
+  cloud:
+    vault:
+      # Spring Cloud Vault is used here purely as a LIBRARY WE CALL.
+      #
+      # Note what is deliberately absent: there is no
+      #   spring.config.import: vault://
+      # That would make Vault a configuration source, binding the
+      # password into spring.datasource.password at startup -- exactly
+      # the "read once and copy into the pool" behaviour we are fixing.
+      #
+      # Without it we still get the two things worth having: Kubernetes
+      # authentication handled for us, and a ready-made VaultTemplate
+      # bean we can call whenever we like.
+      uri: ${VAULT_ADDR:http://vault.vault.svc.cluster.local:8200}
+      # Vault Enterprise only. Leave VAULT_NAMESPACE unset on Community.
+      namespace: ${VAULT_NAMESPACE:}
+      authentication: KUBERNETES
+      kubernetes:
+        role: ${VAULT_AUTH_ROLE:demo-pool-static}
+        kubernetes-path: ${VAULT_AUTH_MOUNT:kubernetes}
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+demo:
+  vault:
+    static-creds-path: ${VAULT_STATIC_PATH:database/static-creds/demo-pool-static}
+
+  db:
+    # No username or password in this URL. There is nowhere for a
+    # credential to live in configuration.
+    url: ${DB_URL:jdbc:postgresql://postgres-postgresql.postgres.svc.cluster.local:5432/postgres}
+    query: ${DB_QUERY:SELECT count(*) FROM demo_items}
+
+  pool:
+    size: ${POOL_SIZE:5}
+    # Not required for static roles; see the comment in DataSourceConfig.
+    max-lifetime-ms: ${POOL_MAX_LIFETIME_MS:120000}
+
+  # Optional. The refresh-on-authentication-failure path is what makes
+  # rotation survivable; this only keeps that path from being the
+  # normal one. Set high on purpose so the failure path is visible.
+  refresh-interval-ms: ${REFRESH_INTERVAL_MS:600000}
+
+  workload-interval-ms: ${WORKLOAD_INTERVAL_MS:1000}
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.hashicorp.demo: INFO
+    org.springframework.vault: INFO

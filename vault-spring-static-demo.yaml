@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ServiceAccount
+
+metadata:
+  name: vault-spring-demo
+  namespace: vault-demo
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: vault-spring-static-demo
+  namespace: vault-demo
+  labels:
+    app: vault-spring-static-demo
+
+spec:
+  replicas: 1
+
+  # One pod at a time. Two would each hold their own pool against the
+  # same rotating credential, on independent clocks, which makes the
+  # page harder to read.
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: vault-spring-static-demo
+
+  template:
+
+    metadata:
+      labels:
+        app: vault-spring-static-demo
+
+    spec:
+
+      # No Vault Agent sidecar and no injected file. This variant talks
+      # to Vault through the Spring Cloud Vault library, authenticating
+      # with this service account's own token -- which is what the
+      # customer wants when secrets must not be rendered to disk.
+      serviceAccountName: vault-spring-demo
+
+      containers:
+
+        - name: app
+
+          # Replace with your own registry, e.g.
+          #   123456789012.dkr.ecr.eu-west-1.amazonaws.com/my-repo:1.0.0
+          image: YOUR_REGISTRY/vault-spring-static-demo:1.0.0
+
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+
+            - name: VAULT_ADDR
+              value: "http://vault.vault.svc.cluster.local:8200"
+
+            # Vault Enterprise only. Delete this whole entry on
+            # Vault Community Edition.
+            - name: VAULT_NAMESPACE
+              value: "YOUR_VAULT_NAMESPACE"
+
+            - name: VAULT_AUTH_MOUNT
+              value: "kubernetes"
+
+            - name: VAULT_AUTH_ROLE
+              value: "demo-pool-static"
+
+            - name: VAULT_STATIC_PATH
+              value: "database/static-creds/demo-pool-static"
+
+            - name: DB_URL
+              value: "jdbc:postgresql://postgres-postgresql.postgres.svc.cluster.local:5432/postgres"
+
+            - name: DB_QUERY
+              value: "SELECT count(*) FROM demo_items"
+
+            - name: POOL_SIZE
+              value: "5"
+
+            - name: POOL_MAX_LIFETIME_MS
+              value: "120000"
+
+            # Kept a little under the role's 120s rotation_period so the
+            # countdown on the page tracks the real rotation clock.
+            #
+            # The scheduled refresh is NOT what makes rotation safe --
+            # the refresh-on-authentication-failure path in
+            # VaultAwareDataSource is. Raise this (say 600000) to make
+            # that path fire on every cycle and watch the
+            # auth-failure -> recovered pair in the log.
+            - name: REFRESH_INTERVAL_MS
+              value: "30000"
+
+            - name: WORKLOAD_INTERVAL_MS
+              value: "1000"
+
+          # /api/status reads the pool and the in-memory credential. It
+          # never queries the database -- this demo is about the database
+          # refusing connections, and a probe that queried it would
+          # restart the pod at the interesting moment.
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 25
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+      restartPolicy: Always
+
+---
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: vault-spring-static-demo
+  namespace: vault-demo
+  labels:
+    app: vault-spring-static-demo
+
+spec:
+  type: ClusterIP
+  selector:
+    app: vault-spring-static-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
