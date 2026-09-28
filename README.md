@@ -4,9 +4,6 @@ A minimal Spring Boot application that reads its database credential from HashiC
 and keeps working when Vault rotates that credential — **no restart, no credential written
 to disk, no configuration reload.**
 
-The pattern is two classes and about forty lines of real logic. Everything else in this
-repository exists so there is something to watch while it happens.
-
 ---
 
 ## The problem this solves
@@ -63,11 +60,6 @@ Reference material:
 - [HashiCorp tutorial: reload secrets in Spring](https://developer.hashicorp.com/vault/tutorials/app-integration/spring-reload-secrets)
 - [HikariCP configuration](https://github.com/brettwooldridge/HikariCP#configuration-knobs-baby)
 
-> A note on that HashiCorp tutorial: it demonstrates the **dynamic** secrets case, using
-> `SecretLeaseContainer` and lease-expiry events, and it refreshes by rebuilding the
-> `DataSource` through `@RefreshScope`. Neither applies here — see
-> [Why not the tutorial's approach](#why-not-the-tutorials-approach) below.
-
 ---
 
 ## Static roles vs dynamic roles
@@ -113,15 +105,6 @@ vault write database/config/YOUR_DB_CONNECTION \
 
 `{{username}}` and `{{password}}` are **literal templating** — Vault substitutes them. Keep
 the quotes so your shell does not expand them.
-
-> **If the connection already exists** and `allowed_roles` is a list, add the new role rather
-> than overwriting it:
-> ```bash
-> vault patch database/config/YOUR_DB_CONNECTION \
->     allowed_roles="existing-role-1,existing-role-2,demo-pool-static"
-> ```
-> Creating a static role that is not in `allowed_roles` fails with
-> `"demo-pool-static" is not an allowed role`.
 
 ### 3. Create the database user Vault will manage
 
@@ -426,24 +409,6 @@ The scheduled refresh is worth having for operational reasons rather than correc
 
 Set `REFRESH_INTERVAL_MS` well above `rotation_period` to watch the failure path fire on every
 cycle; set it below to keep the log quiet.
-
----
-
-## Why not the tutorial's approach
-
-The HashiCorp Spring tutorial refreshes credentials by listening for
-`SecretLeaseExpiredEvent` and calling `ContextRefresher.refresh()` to rebuild the
-`DataSource`. Neither piece is used here:
-
-| Not used | Why |
-|---|---|
-| `spring.config.import: vault://` | binds the password into configuration at startup — the behaviour being fixed |
-| `@RefreshScope` / `ContextRefresher` | rebuilding the `DataSource` discards **every** open connection. On a static rotation those connections are all still valid, so this destroys healthy connections to fix a password only the *next* connection needs. The tutorial acknowledges it causes a brief window of failed connections |
-| `SecretLeaseContainer`, lease events | **static roles issue no lease.** `lease_id` is empty and `lease_duration` is `0`, so lease events never fire. Spring Cloud Vault's own documentation notes it does not obtain new credentials once a lease reaches maximum TTL |
-| `min-renewal`, `expiry-threshold` | these tune lease *renewal*. There is no lease to renew |
-
-The tutorial remains a good reference for **authentication setup** and for the **dynamic**
-credentials case.
 
 ---
 
